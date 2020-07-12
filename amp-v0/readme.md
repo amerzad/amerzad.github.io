@@ -3,7 +3,7 @@
 build-system/global-configs/custom-config.json
 {
   //"geoApiUrl": "https://example.com/geo-api",
-  "cdnUrl": "https://amerzad.github.io/amp-v0",
+  "cdnUrl": "https://amerzad.github.io/amp-v0/dist",
   "version-locking": 0
 }
 ```
