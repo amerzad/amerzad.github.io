@@ -1,0 +1,16 @@
+node_modules/google-closure-library/closure/goog/base.js
+node_modules/google-closure-library/closure/goog/debug/error.js
+node_modules/google-closure-library/closure/goog/dom/nodetype.js
+node_modules/google-closure-library/closure/goog/asserts/asserts.js
+node_modules/google-closure-library/closure/goog/array/array.js
+node_modules/google-closure-library/closure/goog/object/object.js
+node_modules/google-closure-library/closure/goog/structs/structs.js
+node_modules/google-closure-library/closure/goog/structs/collection.js
+node_modules/google-closure-library/closure/goog/functions/functions.js
+node_modules/google-closure-library/closure/goog/math/math.js
+node_modules/google-closure-library/closure/goog/iter/iter.js
+node_modules/google-closure-library/closure/goog/structs/map.js
+node_modules/google-closure-library/closure/goog/structs/set.js
+dist/validator-proto-generated.js
+engine/parse-srcset.js
+engine/parse-srcset_test.js
