@@ -321,6 +321,86 @@ var WorkerThread = (function (exports) {
     }
 
     /**
+     * Copyright 2020 The AMP HTML Authors. All Rights Reserved.
+     *
+     * Licensed under the Apache License, Version 2.0 (the "License");
+     * you may not use this file except in compliance with the License.
+     * You may obtain a copy of the License at
+     *
+     *      http://www.apache.org/licenses/LICENSE-2.0
+     *
+     * Unless required by applicable law or agreed to in writing, software
+     * distributed under the License is distributed on an "AS-IS" BASIS,
+     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     * See the License for the specific language governing permissions and
+     * limitations under the License.
+     */
+    const exportedFunctions = {};
+    function callFunctionMessageHandler(event, document) {
+      const msg = event.data;
+
+      if (msg[12
+      /* type */
+      ] !== 12
+      /* FUNCTION */
+      ) {
+          return;
+        }
+
+      const functionMessage = msg;
+      const fnIdentifier = functionMessage[77
+      /* functionIdentifier */
+      ];
+      const fnArguments = JSON.parse(functionMessage[78
+      /* functionArguments */
+      ]);
+      const index = functionMessage[7
+      /* index */
+      ];
+      const fn = exportedFunctions[fnIdentifier];
+
+      if (!fn) {
+        transfer$2(document, [13
+        /* FUNCTION_CALL */
+        , 2
+        /* REJECT */
+        , index, store(JSON.stringify(`[worker-dom]: Exported function "${fnIdentifier}" could not be found.`))]);
+        return;
+      }
+
+      Promise.resolve(fn) // Forcing promise flows allows us to skip a try/catch block.
+      .then(f => f.apply(null, fnArguments)).then(value => {
+        transfer$2(document, [13
+        /* FUNCTION_CALL */
+        , 1
+        /* RESOLVE */
+        , index, store(JSON.stringify(value))]);
+      }, err => {
+        const errorMessage = JSON.stringify(err.message || err);
+        transfer$2(document, [13
+        /* FUNCTION_CALL */
+        , 2
+        /* REJECT */
+        , index, store(JSON.stringify(`[worker-dom]: Function "${fnIdentifier}" threw: "${errorMessage}"`))]);
+      });
+    }
+    function exportFunction(name, fn) {
+      if (!name || name === '') {
+        throw new Error(`[worker-dom]: Attempt to export function was missing an identifier.`);
+      }
+
+      if (typeof fn !== 'function') {
+        throw new Error(`[worker-dom]: Attempt to export non-function failed: ("${name}", ${typeof fn}).`);
+      }
+
+      if (name in exportedFunctions) {
+        throw new Error(`[worker-dom]: Attempt to re-export function failed: "${name}".`);
+      }
+
+      exportedFunctions[name] = fn;
+    }
+
+    /**
      * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
      *
      * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1104,6 +1184,394 @@ var WorkerThread = (function (exports) {
     }
 
     /**
+     * Copyright 2020 The AMP HTML Authors. All Rights Reserved.
+     *
+     * Licensed under the Apache License, Version 2.0 (the "License");
+     * you may not use this file except in compliance with the License.
+     * You may obtain a copy of the License at
+     *
+     *      http://www.apache.org/licenses/LICENSE-2.0
+     *
+     * Unless required by applicable law or agreed to in writing, software
+     * distributed under the License is distributed on an "AS-IS" BASIS,
+     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     * See the License for the specific language governing permissions and
+     * limitations under the License.
+     */
+    const ALLOWLISTED_GLOBALS = {
+      Array: true,
+      ArrayBuffer: true,
+      BigInt: true,
+      BigInt64Array: true,
+      BigUint64Array: true,
+      Boolean: true,
+      Cache: true,
+      CustomEvent: true,
+      DataView: true,
+      Date: true,
+      Error: true,
+      EvalError: true,
+      Event: true,
+      EventTarget: true,
+      Float32Array: true,
+      Float64Array: true,
+      Function: true,
+      Infinity: true,
+      Int16Array: true,
+      Int32Array: true,
+      Int8Array: true,
+      Intl: true,
+      JSON: true,
+      Map: true,
+      Math: true,
+      NaN: true,
+      Number: true,
+      Object: true,
+      Promise: true,
+      Proxy: true,
+      RangeError: true,
+      ReferenceError: true,
+      Reflect: true,
+      RegExp: true,
+      Set: true,
+      String: true,
+      Symbol: true,
+      SyntaxError: true,
+      TextDecoder: true,
+      TextEncoder: true,
+      TypeError: true,
+      URIError: true,
+      URL: true,
+      Uint16Array: true,
+      Uint32Array: true,
+      Uint8Array: true,
+      Uint8ClampedArray: true,
+      WeakMap: true,
+      WeakSet: true,
+      WebAssembly: true,
+      WebSocket: true,
+      XMLHttpRequest: true,
+      atob: true,
+      addEventListener: true,
+      removeEventListener: true,
+      btoa: true,
+      caches: true,
+      clearInterval: true,
+      clearTimeout: true,
+      console: true,
+      decodeURI: true,
+      decodeURIComponent: true,
+      document: true,
+      encodeURI: true,
+      encodeURIComponent: true,
+      escape: true,
+      fetch: true,
+      indexedDB: true,
+      isFinite: true,
+      isNaN: true,
+      location: true,
+      navigator: true,
+      onerror: true,
+      onrejectionhandled: true,
+      onunhandledrejection: true,
+      parseFloat: true,
+      parseInt: true,
+      performance: true,
+      requestAnimationFrame: true,
+      cancelAnimationFrame: true,
+      self: true,
+      setTimeout: true,
+      setInterval: true,
+      unescape: true
+    }; // Modify global scope by removing disallowed properties.
+
+    function deleteGlobals(global) {
+      /**
+       * @param object
+       * @param property
+       * @return True if property was deleted from object. Otherwise, false.
+       */
+      const deleteUnsafe = (object, property) => {
+        if (!ALLOWLISTED_GLOBALS.hasOwnProperty(property)) {
+          try {
+            delete object[property];
+            return true;
+          } catch (e) {}
+        }
+
+        return false;
+      }; // Walk up global's prototype chain and dereference non-allowlisted properties
+      // until EventTarget is reached.
+
+
+      let current = global;
+
+      while (current && current.constructor !== EventTarget) {
+        const deleted = [];
+        const failedToDelete = [];
+        Object.getOwnPropertyNames(current).forEach(prop => {
+          if (deleteUnsafe(current, prop)) {
+            deleted.push(prop);
+          } else {
+            failedToDelete.push(prop);
+          }
+        });
+        console.info(`Removed ${deleted.length} references from`, current, ':', deleted);
+
+        if (failedToDelete.length) {
+          console.info(`Failed to remove ${failedToDelete.length} references from`, current, ':', failedToDelete);
+        }
+
+        current = Object.getPrototypeOf(current);
+      }
+    }
+
+    /**
+     * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
+     *
+     * Licensed under the Apache License, Version 2.0 (the "License");
+     * you may not use this file except in compliance with the License.
+     * You may obtain a copy of the License at
+     *
+     *      http://www.apache.org/licenses/LICENSE-2.0
+     *
+     * Unless required by applicable law or agreed to in writing, software
+     * distributed under the License is distributed on an "AS-IS" BASIS,
+     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     * See the License for the specific language governing permissions and
+     * limitations under the License.
+     */
+
+    const tagNameConditionPredicate = tagNames => element => {
+      return tagNames.includes(element.tagName);
+    };
+    const elementPredicate = node => node.nodeType === 1
+    /* ELEMENT_NODE */
+    ;
+    const matchChildrenElements = (node, conditionPredicate) => {
+      const matchingElements = [];
+      node.childNodes.forEach(child => {
+        if (elementPredicate(child)) {
+          if (conditionPredicate(child)) {
+            matchingElements.push(child);
+          }
+
+          matchingElements.push(...matchChildrenElements(child, conditionPredicate));
+        }
+      });
+      return matchingElements;
+    };
+    const matchChildElement = (element, conditionPredicate) => {
+      let returnValue = null;
+      element.children.some(child => {
+        if (conditionPredicate(child)) {
+          returnValue = child;
+          return true;
+        }
+
+        const grandChildMatch = matchChildElement(child, conditionPredicate);
+
+        if (grandChildMatch !== null) {
+          returnValue = grandChildMatch;
+          return true;
+        }
+
+        return false;
+      });
+      return returnValue;
+    };
+    const matchNearestParent = (element, conditionPredicate) => {
+      while (element = element.parentNode) {
+        if (conditionPredicate(element)) {
+          return element;
+        }
+      }
+
+      return null;
+    };
+    /**
+     * @see https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors
+     * @param attrSelector the selector we are trying to match for.
+     * @param element the element being tested.
+     * @return boolean for whether we match the condition
+     */
+
+    const matchAttrReference = (attrSelector, element) => {
+      if (!attrSelector) {
+        return false;
+      }
+
+      const equalPos = attrSelector.indexOf('=');
+      const selectorLength = attrSelector.length;
+      const caseInsensitive = attrSelector.charAt(selectorLength - 2) === 'i';
+      const endPos = caseInsensitive ? selectorLength - 3 : selectorLength - 1;
+
+      if (equalPos !== -1) {
+        const equalSuffix = attrSelector.charAt(equalPos - 1);
+        const possibleSuffixes = ['~', '|', '$', '^', '*'];
+        const attrString = possibleSuffixes.includes(equalSuffix) ? attrSelector.substring(1, equalPos - 1) : attrSelector.substring(1, equalPos);
+        const rawValue = attrSelector.substring(equalPos + 1, endPos);
+        const rawAttrValue = element.getAttribute(attrString);
+
+        if (rawAttrValue) {
+          const casedValue = caseInsensitive ? toLower(rawValue) : rawValue;
+          const casedAttrValue = caseInsensitive ? toLower(rawAttrValue) : rawAttrValue;
+
+          switch (equalSuffix) {
+            case '~':
+              return casedAttrValue.split(' ').indexOf(casedValue) !== -1;
+
+            case '|':
+              return casedAttrValue === casedValue || casedAttrValue === `${casedValue}-`;
+
+            case '^':
+              return casedAttrValue.startsWith(casedValue);
+
+            case '$':
+              return casedAttrValue.endsWith(casedValue);
+
+            case '*':
+              return casedAttrValue.indexOf(casedValue) !== -1;
+
+            default:
+              return casedAttrValue === casedValue;
+          }
+        }
+
+        return false;
+      } else {
+        return element.hasAttribute(attrSelector.substring(1, endPos));
+      }
+    };
+
+    /**
+     * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
+     *
+     * Licensed under the Apache License, Version 2.0 (the "License");
+     * you may not use this file except in compliance with the License.
+     * You may obtain a copy of the License at
+     *
+     *      http://www.apache.org/licenses/LICENSE-2.0
+     *
+     * Unless required by applicable law or agreed to in writing, software
+     * distributed under the License is distributed on an "AS-IS" BASIS,
+     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     * See the License for the specific language governing permissions and
+     * limitations under the License.
+     */
+    /*
+    Normally ParentNode is implemented as a mixin, but since the Node class is an abstract
+    this makes it hard to build a mixin that recieves a base of the representations of Node needing
+    the mixed in functionality.
+
+    // Partially implemented Mixin Methods
+    // Both Element.querySelector() and Element.querySelector() are only implemented for the following simple selectors:
+    // - Element selectors
+    // - ID selectors
+    // - Class selectors
+    // - Attribute selectors
+    // Element.querySelector() – https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
+    // Element.querySelectorAll() – https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
+    */
+
+    class ParentNode extends Node {
+      /**
+       * Getter returning children of an Element that are Elements themselves.
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/children
+       * @return Element objects that are children of this ParentNode, omitting all of its non-element nodes.
+       */
+      get children() {
+        return this.childNodes.filter(elementPredicate);
+      }
+      /**
+       * Getter returning the number of child elements of a Element.
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/childElementCount
+       * @return number of child elements of the given Element.
+       */
+
+
+      get childElementCount() {
+        return this.children.length;
+      }
+      /**
+       * Getter returning the first Element in Element.childNodes.
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/firstElementChild
+       * @return first childNode that is also an element.
+       */
+
+
+      get firstElementChild() {
+        return this.childNodes.find(elementPredicate) || null;
+      }
+      /**
+       * Getter returning the last Element in Element.childNodes.
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/lastElementChild
+       * @return first childNode that is also an element.
+       */
+
+
+      get lastElementChild() {
+        const children = this.children;
+        return children[children.length - 1] || null;
+      }
+      /**
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
+       * @param selector the selector we are trying to match for.
+       * @return Element with matching selector.
+       */
+
+
+      querySelector(selector) {
+        const matches = querySelectorAll(this, selector);
+        return matches ? matches[0] : null;
+      }
+      /**
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
+       * @param selector the selector we are trying to match for.
+       * @return Elements with matching selector.
+       */
+
+
+      querySelectorAll(selector) {
+        return querySelectorAll(this, selector);
+      }
+
+    }
+    /**
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
+     * @param node the node to filter results under.
+     * @param selector the selector we are trying to match for.
+     * @return Element with matching selector.
+     */
+
+    function querySelectorAll(node, selector) {
+      // As per spec: https://dom.spec.whatwg.org/#scope-match-a-selectors-string
+      // First, parse the selector
+      const selectorBracketIndexes = [selector.indexOf('['), selector.indexOf(']')];
+      const selectorHasAttr = containsIndexOf(selectorBracketIndexes[0]) && containsIndexOf(selectorBracketIndexes[1]);
+      const elementSelector = selectorHasAttr ? selector.substring(0, selectorBracketIndexes[0]) : selector;
+      const attrSelector = selectorHasAttr ? selector.substring(selectorBracketIndexes[0], selectorBracketIndexes[1] + 1) : null; // TODO(nainar): Parsing selectors is needed when we add in more complex selectors.
+      // Second, find all the matching elements on the Document
+
+      let matcher;
+
+      if (selector[0] === '[') {
+        matcher = element => matchAttrReference(selector, element);
+      } else if (elementSelector[0] === '#') {
+        matcher = selectorHasAttr ? element => element.id === elementSelector.substr(1) && matchAttrReference(attrSelector, element) : element => element.id === elementSelector.substr(1);
+      } else if (elementSelector[0] === '.') {
+        matcher = selectorHasAttr ? element => element.classList.contains(elementSelector.substr(1)) && matchAttrReference(attrSelector, element) : element => element.classList.contains(elementSelector.substr(1));
+      } else {
+        matcher = selectorHasAttr ? element => element.localName === toLower(elementSelector) && matchAttrReference(attrSelector, element) : element => element.localName === toLower(elementSelector);
+      } // Third, filter to return elements that exist within the querying element's descendants.
+
+
+      return matcher ? matchChildrenElements(node[45
+      /* scopingRoot */
+      ], matcher).filter(element => node !== element && node.contains(element)) : [];
+    }
+
+    /**
      * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
      *
      * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1386,251 +1854,6 @@ var WorkerThread = (function (exports) {
         ]), 0, value !== null ? store(value) + 1 : 0]);
       }
 
-    }
-
-    /**
-     * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
-     *
-     * Licensed under the Apache License, Version 2.0 (the "License");
-     * you may not use this file except in compliance with the License.
-     * You may obtain a copy of the License at
-     *
-     *      http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS-IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
-     */
-
-    const tagNameConditionPredicate = tagNames => element => {
-      return tagNames.includes(element.tagName);
-    };
-    const elementPredicate = node => node.nodeType === 1
-    /* ELEMENT_NODE */
-    ;
-    const matchChildrenElements = (node, conditionPredicate) => {
-      const matchingElements = [];
-      node.childNodes.forEach(child => {
-        if (elementPredicate(child)) {
-          if (conditionPredicate(child)) {
-            matchingElements.push(child);
-          }
-
-          matchingElements.push(...matchChildrenElements(child, conditionPredicate));
-        }
-      });
-      return matchingElements;
-    };
-    const matchChildElement = (element, conditionPredicate) => {
-      let returnValue = null;
-      element.children.some(child => {
-        if (conditionPredicate(child)) {
-          returnValue = child;
-          return true;
-        }
-
-        const grandChildMatch = matchChildElement(child, conditionPredicate);
-
-        if (grandChildMatch !== null) {
-          returnValue = grandChildMatch;
-          return true;
-        }
-
-        return false;
-      });
-      return returnValue;
-    };
-    const matchNearestParent = (element, conditionPredicate) => {
-      while (element = element.parentNode) {
-        if (conditionPredicate(element)) {
-          return element;
-        }
-      }
-
-      return null;
-    };
-    /**
-     * @see https://developer.mozilla.org/en-US/docs/Web/CSS/Attribute_selectors
-     * @param attrSelector the selector we are trying to match for.
-     * @param element the element being tested.
-     * @return boolean for whether we match the condition
-     */
-
-    const matchAttrReference = (attrSelector, element) => {
-      if (!attrSelector) {
-        return false;
-      }
-
-      const equalPos = attrSelector.indexOf('=');
-      const selectorLength = attrSelector.length;
-      const caseInsensitive = attrSelector.charAt(selectorLength - 2) === 'i';
-      const endPos = caseInsensitive ? selectorLength - 3 : selectorLength - 1;
-
-      if (equalPos !== -1) {
-        const equalSuffix = attrSelector.charAt(equalPos - 1);
-        const possibleSuffixes = ['~', '|', '$', '^', '*'];
-        const attrString = possibleSuffixes.includes(equalSuffix) ? attrSelector.substring(1, equalPos - 1) : attrSelector.substring(1, equalPos);
-        const rawValue = attrSelector.substring(equalPos + 1, endPos);
-        const rawAttrValue = element.getAttribute(attrString);
-
-        if (rawAttrValue) {
-          const casedValue = caseInsensitive ? toLower(rawValue) : rawValue;
-          const casedAttrValue = caseInsensitive ? toLower(rawAttrValue) : rawAttrValue;
-
-          switch (equalSuffix) {
-            case '~':
-              return casedAttrValue.split(' ').indexOf(casedValue) !== -1;
-
-            case '|':
-              return casedAttrValue === casedValue || casedAttrValue === `${casedValue}-`;
-
-            case '^':
-              return casedAttrValue.startsWith(casedValue);
-
-            case '$':
-              return casedAttrValue.endsWith(casedValue);
-
-            case '*':
-              return casedAttrValue.indexOf(casedValue) !== -1;
-
-            default:
-              return casedAttrValue === casedValue;
-          }
-        }
-
-        return false;
-      } else {
-        return element.hasAttribute(attrSelector.substring(1, endPos));
-      }
-    };
-
-    /**
-     * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
-     *
-     * Licensed under the Apache License, Version 2.0 (the "License");
-     * you may not use this file except in compliance with the License.
-     * You may obtain a copy of the License at
-     *
-     *      http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS-IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
-     */
-    /*
-    Normally ParentNode is implemented as a mixin, but since the Node class is an abstract
-    this makes it hard to build a mixin that recieves a base of the representations of Node needing
-    the mixed in functionality.
-
-    // Partially implemented Mixin Methods
-    // Both Element.querySelector() and Element.querySelector() are only implemented for the following simple selectors:
-    // - Element selectors
-    // - ID selectors
-    // - Class selectors
-    // - Attribute selectors
-    // Element.querySelector() – https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
-    // Element.querySelectorAll() – https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
-    */
-
-    class ParentNode extends Node {
-      /**
-       * Getter returning children of an Element that are Elements themselves.
-       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/children
-       * @return Element objects that are children of this ParentNode, omitting all of its non-element nodes.
-       */
-      get children() {
-        return this.childNodes.filter(elementPredicate);
-      }
-      /**
-       * Getter returning the number of child elements of a Element.
-       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/childElementCount
-       * @return number of child elements of the given Element.
-       */
-
-
-      get childElementCount() {
-        return this.children.length;
-      }
-      /**
-       * Getter returning the first Element in Element.childNodes.
-       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/firstElementChild
-       * @return first childNode that is also an element.
-       */
-
-
-      get firstElementChild() {
-        return this.childNodes.find(elementPredicate) || null;
-      }
-      /**
-       * Getter returning the last Element in Element.childNodes.
-       * @see https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/lastElementChild
-       * @return first childNode that is also an element.
-       */
-
-
-      get lastElementChild() {
-        const children = this.children;
-        return children[children.length - 1] || null;
-      }
-      /**
-       * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
-       * @param selector the selector we are trying to match for.
-       * @return Element with matching selector.
-       */
-
-
-      querySelector(selector) {
-        const matches = querySelectorAll(this, selector);
-        return matches ? matches[0] : null;
-      }
-      /**
-       * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelectorAll
-       * @param selector the selector we are trying to match for.
-       * @return Elements with matching selector.
-       */
-
-
-      querySelectorAll(selector) {
-        return querySelectorAll(this, selector);
-      }
-
-    }
-    /**
-     * @see https://developer.mozilla.org/en-US/docs/Web/API/Element/querySelector
-     * @param node the node to filter results under.
-     * @param selector the selector we are trying to match for.
-     * @return Element with matching selector.
-     */
-
-    function querySelectorAll(node, selector) {
-      // As per spec: https://dom.spec.whatwg.org/#scope-match-a-selectors-string
-      // First, parse the selector
-      const selectorBracketIndexes = [selector.indexOf('['), selector.indexOf(']')];
-      const selectorHasAttr = containsIndexOf(selectorBracketIndexes[0]) && containsIndexOf(selectorBracketIndexes[1]);
-      const elementSelector = selectorHasAttr ? selector.substring(0, selectorBracketIndexes[0]) : selector;
-      const attrSelector = selectorHasAttr ? selector.substring(selectorBracketIndexes[0], selectorBracketIndexes[1] + 1) : null; // TODO(nainar): Parsing selectors is needed when we add in more complex selectors.
-      // Second, find all the matching elements on the Document
-
-      let matcher;
-
-      if (selector[0] === '[') {
-        matcher = element => matchAttrReference(selector, element);
-      } else if (elementSelector[0] === '#') {
-        matcher = selectorHasAttr ? element => element.id === elementSelector.substr(1) && matchAttrReference(attrSelector, element) : element => element.id === elementSelector.substr(1);
-      } else if (elementSelector[0] === '.') {
-        matcher = selectorHasAttr ? element => element.classList.contains(elementSelector.substr(1)) && matchAttrReference(attrSelector, element) : element => element.classList.contains(elementSelector.substr(1));
-      } else {
-        matcher = selectorHasAttr ? element => element.localName === toLower(elementSelector) && matchAttrReference(attrSelector, element) : element => element.localName === toLower(elementSelector);
-      } // Third, filter to return elements that exist within the querying element's descendants.
-
-
-      return matcher ? matchChildrenElements(node[45
-      /* scopingRoot */
-      ], matcher).filter(element => node !== element && node.contains(element)) : [];
     }
 
     /**
@@ -6900,31 +7123,6 @@ var WorkerThread = (function (exports) {
     }
 
     /**
-     * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
-     *
-     * Licensed under the Apache License, Version 2.0 (the "License");
-     * you may not use this file except in compliance with the License.
-     * You may obtain a copy of the License at
-     *
-     *      http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS-IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
-     */
-    class SVGElement extends Element {
-      constructor(nodeType, localName, namespaceURI, ownerDocument) {
-        super(nodeType, localName, SVG_NAMESPACE, ownerDocument); // Element uppercases its nodeName, but SVG elements don't.
-
-        this.nodeName = localName;
-      }
-
-    }
-    registerSubclass('svg', SVGElement, SVG_NAMESPACE);
-
-    /**
      * Copyright 2019 The AMP HTML Authors. All Rights Reserved.
      *
      * Licensed under the Apache License, Version 2.0 (the "License");
@@ -7045,6 +7243,106 @@ var WorkerThread = (function (exports) {
     }
 
     /**
+     * Copyright 2020 The AMP HTML Authors. All Rights Reserved.
+     *
+     * Licensed under the Apache License, Version 2.0 (the "License");
+     * you may not use this file except in compliance with the License.
+     * You may obtain a copy of the License at
+     *
+     *      http://www.apache.org/licenses/LICENSE-2.0
+     *
+     * Unless required by applicable law or agreed to in writing, software
+     * distributed under the License is distributed on an "AS-IS" BASIS,
+     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     * See the License for the specific language governing permissions and
+     * limitations under the License.
+     */
+    const frameDuration = 1000 / 60;
+    let last = 0;
+    let id = 0;
+    let queue = [];
+    /**
+     * Schedules the accumulated callbacks to be fired 16ms after the last round.
+     */
+
+    function scheduleNext() {
+      const now = Date.now();
+      const next = Math.round(Math.max(0, frameDuration - (Date.now() - last)));
+      last = now + next;
+      setTimeout(function () {
+        var cp = queue.slice(0); // Clear queue here to prevent
+        // callbacks from appending listeners
+        // to the current frame's queue
+
+        queue.length = 0;
+
+        for (var i = 0; i < cp.length; i++) {
+          if (cp[i].cancelled) {
+            continue;
+          }
+
+          try {
+            cp[i].callback(last);
+          } catch (e) {
+            setTimeout(function () {
+              throw e;
+            }, 0);
+          }
+        }
+      }, next);
+    }
+
+    function rafPolyfill(callback) {
+      if (queue.length === 0) {
+        scheduleNext();
+      }
+
+      if (id === Number.MAX_SAFE_INTEGER) {
+        id = 0;
+      }
+
+      queue.push({
+        handle: ++id,
+        callback,
+        cancelled: false
+      });
+      return id;
+    }
+    function cafPolyfill(handle) {
+      for (let i = 0; i < queue.length; i++) {
+        if (queue[i].handle === handle) {
+          queue[i].cancelled = true;
+          return;
+        }
+      }
+    }
+
+    /**
+     * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
+     *
+     * Licensed under the Apache License, Version 2.0 (the "License");
+     * you may not use this file except in compliance with the License.
+     * You may obtain a copy of the License at
+     *
+     *      http://www.apache.org/licenses/LICENSE-2.0
+     *
+     * Unless required by applicable law or agreed to in writing, software
+     * distributed under the License is distributed on an "AS-IS" BASIS,
+     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     * See the License for the specific language governing permissions and
+     * limitations under the License.
+     */
+    class SVGElement extends Element {
+      constructor(nodeType, localName, namespaceURI, ownerDocument) {
+        super(nodeType, localName, SVG_NAMESPACE, ownerDocument); // Element uppercases its nodeName, but SVG elements don't.
+
+        this.nodeName = localName;
+      }
+
+    }
+    registerSubclass('svg', SVGElement, SVG_NAMESPACE);
+
+    /**
      * Copyright 2019 The AMP HTML Authors. All Rights Reserved.
      *
      * Licensed under the Apache License, Version 2.0 (the "License");
@@ -7092,86 +7390,6 @@ var WorkerThread = (function (exports) {
     }
 
     /**
-     * Copyright 2020 The AMP HTML Authors. All Rights Reserved.
-     *
-     * Licensed under the Apache License, Version 2.0 (the "License");
-     * you may not use this file except in compliance with the License.
-     * You may obtain a copy of the License at
-     *
-     *      http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS-IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
-     */
-    const exportedFunctions = {};
-    function callFunctionMessageHandler(event, document) {
-      const msg = event.data;
-
-      if (msg[12
-      /* type */
-      ] !== 12
-      /* FUNCTION */
-      ) {
-          return;
-        }
-
-      const functionMessage = msg;
-      const fnIdentifier = functionMessage[77
-      /* functionIdentifier */
-      ];
-      const fnArguments = JSON.parse(functionMessage[78
-      /* functionArguments */
-      ]);
-      const index = functionMessage[7
-      /* index */
-      ];
-      const fn = exportedFunctions[fnIdentifier];
-
-      if (!fn) {
-        transfer$2(document, [13
-        /* FUNCTION_CALL */
-        , 2
-        /* REJECT */
-        , index, store(JSON.stringify(`[worker-dom]: Exported function "${fnIdentifier}" could not be found.`))]);
-        return;
-      }
-
-      Promise.resolve(fn) // Forcing promise flows allows us to skip a try/catch block.
-      .then(f => f.apply(null, fnArguments)).then(value => {
-        transfer$2(document, [13
-        /* FUNCTION_CALL */
-        , 1
-        /* RESOLVE */
-        , index, store(JSON.stringify(value))]);
-      }, err => {
-        const errorMessage = JSON.stringify(err.message || err);
-        transfer$2(document, [13
-        /* FUNCTION_CALL */
-        , 2
-        /* REJECT */
-        , index, store(JSON.stringify(`[worker-dom]: Function "${fnIdentifier}" threw: "${errorMessage}"`))]);
-      });
-    }
-    function exportFunction(name, fn) {
-      if (!name || name === '') {
-        throw new Error(`[worker-dom]: Attempt to export function was missing an identifier.`);
-      }
-
-      if (typeof fn !== 'function') {
-        throw new Error(`[worker-dom]: Attempt to export non-function failed: ("${name}", ${typeof fn}).`);
-      }
-
-      if (name in exportedFunctions) {
-        throw new Error(`[worker-dom]: Attempt to re-export function failed: "${name}".`);
-      }
-
-      exportedFunctions[name] = fn;
-    }
-
-    /**
      * Copyright 2018 The AMP HTML Authors. All Rights Reserved.
      *
      * Licensed under the Apache License, Version 2.0 (the "License");
@@ -7186,92 +7404,6 @@ var WorkerThread = (function (exports) {
      * See the License for the specific language governing permissions and
      * limitations under the License.
      */
-    const ALLOWLISTED_GLOBALS = {
-      Array: true,
-      ArrayBuffer: true,
-      BigInt: true,
-      BigInt64Array: true,
-      BigUint64Array: true,
-      Boolean: true,
-      Cache: true,
-      CustomEvent: true,
-      DataView: true,
-      Date: true,
-      Error: true,
-      EvalError: true,
-      Event: true,
-      EventTarget: true,
-      Float32Array: true,
-      Float64Array: true,
-      Function: true,
-      Infinity: true,
-      Int16Array: true,
-      Int32Array: true,
-      Int8Array: true,
-      Intl: true,
-      JSON: true,
-      Map: true,
-      Math: true,
-      NaN: true,
-      Number: true,
-      Object: true,
-      Promise: true,
-      Proxy: true,
-      RangeError: true,
-      ReferenceError: true,
-      Reflect: true,
-      RegExp: true,
-      Set: true,
-      String: true,
-      Symbol: true,
-      SyntaxError: true,
-      TextDecoder: true,
-      TextEncoder: true,
-      TypeError: true,
-      URIError: true,
-      URL: true,
-      Uint16Array: true,
-      Uint32Array: true,
-      Uint8Array: true,
-      Uint8ClampedArray: true,
-      WeakMap: true,
-      WeakSet: true,
-      WebAssembly: true,
-      WebSocket: true,
-      XMLHttpRequest: true,
-      atob: true,
-      addEventListener: true,
-      removeEventListener: true,
-      btoa: true,
-      caches: true,
-      clearInterval: true,
-      clearTimeout: true,
-      console: true,
-      decodeURI: true,
-      decodeURIComponent: true,
-      document: true,
-      encodeURI: true,
-      encodeURIComponent: true,
-      escape: true,
-      fetch: true,
-      indexedDB: true,
-      isFinite: true,
-      isNaN: true,
-      location: true,
-      navigator: true,
-      onerror: true,
-      onrejectionhandled: true,
-      onunhandledrejection: true,
-      parseFloat: true,
-      parseInt: true,
-      performance: true,
-      requestAnimationFrame: true,
-      cancelAnimationFrame: true,
-      self: true,
-      setTimeout: true,
-      setInterval: true,
-      unescape: true
-    };
     const globalScope = {
       innerWidth: 0,
       innerHeight: 0,
@@ -7315,7 +7447,9 @@ var WorkerThread = (function (exports) {
       SVGElement,
       Text,
       Event: Event$1,
-      MutationObserver
+      MutationObserver,
+      requestAnimationFrame: self.requestAnimationFrame || rafPolyfill,
+      cancelAnimationFrame: self.cancelAnimationFrame || cafPolyfill
     };
 
     const noop = () => void 0; // WorkerDOM.Document.defaultView ends up being the window object.
@@ -7339,48 +7473,7 @@ var WorkerThread = (function (exports) {
     }(postMessage.bind(self) || noop, addEventListener.bind(self) || noop, removeEventListener.bind(self) || noop); // Modify global scope by removing disallowed properties and wrapping `fetch()`.
 
     (function (global) {
-      /**
-       * @param object
-       * @param property
-       * @return True if property was deleted from object. Otherwise, false.
-       */
-      const deleteUnsafe = (object, property) => {
-        if (!ALLOWLISTED_GLOBALS.hasOwnProperty(property)) {
-          try {
-            delete object[property];
-            return true;
-          } catch (e) {}
-        }
-
-        return false;
-      }; // Walk up global's prototype chain and dereference non-allowlisted properties
-      // until EventTarget is reached.
-
-
-      let current = global;
-
-      while (current && current.constructor !== EventTarget) {
-        const deleted = [];
-        const failedToDelete = [];
-        Object.getOwnPropertyNames(current).forEach(prop => {
-          if (deleteUnsafe(current, prop)) {
-            deleted.push(prop);
-          } else {
-            failedToDelete.push(prop);
-          }
-        });
-
-        if (WORKER_DOM_DEBUG) {
-          console.info(`Removed ${deleted.length} references from`, current, ':', deleted);
-
-          if (failedToDelete.length) {
-            console.info(`Failed to remove ${failedToDelete.length} references from`, current, ':', failedToDelete);
-          }
-        }
-
-        current = Object.getPrototypeOf(current);
-      } // Wrap global.fetch() with our longTask API.
-
+      deleteGlobals(global); // Wrap global.fetch() with our longTask API.
 
       const originalFetch = global['fetch'];
 
